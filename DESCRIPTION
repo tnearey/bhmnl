@@ -1,5 +1,5 @@
 Package: bhmnl
-Title: Bayesian hierarichical multinomil logistic with possible factorial responses
+Title: Bayesian Hierarichical Multinomial Logistic( with FactorableResponses)
 Version: 0.0.0.9000
 Authors@R: 
     person(given = "Terrance",
@@ -7,7 +7,7 @@ Authors@R:
            role = c("aut", "cre"),
            email = "noone@nowhere.net",
            comment = c(ORCID = "YOUR-ORCID-ID"))
-Description: What the package does (one paragraph).
+Description: .
 License: GPL-3
 Encoding: UTF-8
 Language: es
