@@ -1,0 +1,469 @@
+---
+title: "Factorial Response Logistic Demo"
+output: html_notebook
+---
+
+# Generate "Indicator variable" redundant design matrix with parseable labels
+The general strategy:   Create an "inflated factorial design" to trick `model.matrix()`
+to designing an "Indicator variable" model with standard formulae.
+https://stackoverflow.com/a/56677013/1795127
+Reason: We want MacElreath style "Indicator variables" for each factor and interaction of a possibly factored set of responses response. 
+
+##Outline:  
+
+* For K-factors [1:K] each witn $l_k$ factors each (Works fine for K==1):
+* Pad the levels argument of factor with an extra "0-th level" response level, (so there are $l_k +1$ levels in the inflated factor) and label  the extra level 0 as "_".
+* We use `car::contr.Treatment` to get clear labeling of levels
+* We then use `model.matrix()` to generate the inflated design matrix, including an unwanted "(Intercept)"  and response main effect (no interactions with response factors) terms. 
+* Finally, we extract the matrix  part only, losing the spurious intercept term.
+
+### This also handles factored stimuli. 
+Factored will have internally expanded levels. The factored stimulus levels will will be created with default r contrasts with default r contrast names. <facName><lev>
+Factored responses will (via car::contr.Treatment) have the form <facName>|<level>.
+
+We also demonstrate packing data for an example stan file `./yegBaselineHMNL.stan`
+(See also: [https://discourse.mc-stan.org/t/speeding-up-a-hierarchical-multinomial-logit-model/1538/5?u=tnearey]
+)
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+```{r}
+library(data.table)
+# actually only need car::contr.Treatment
+# library(car)
+# Is comment ok
+catln <- function(...) {cat(...,'\n')}
+
+```
+
+## >> myFactorialHMNL_CreateData()
+Create some test data
+
+## Create a fully specified response-Indicator-variable model.
+### Read in test data into stimulus response data.table, srDtb
+
+### This assumes that there is a coherent factor specification to master response category (here `syl' ) and any coherent factorizations of the master. Here 'cn' and 'vow'.
+#### A generalized version will follow
+
+# prepareFacRespDmxDtb=function(masterCatVName,catFactVNames,stimVNames
+
+## >> showRespFacDtbLevs()
+```{r}
+## Debugging 
+showRespFacDtbLevs=function(respFacDtb){
+  for (n in names(respFacDtb)){
+    catln(n, levels(respFacDtb[[n]]))
+  }
+}
+```
+
+## >> showColInfo(xdtb) function
+Show compact summmaries
+```{r}
+showColInfo=function(xdtb){
+  catln('class of input', class(xdtb))
+  for (n in names(xdtb)){
+    t=xdtb[[n]]
+    catln(n, class(t))
+    nna=sum(is.na(t))
+    nuniq=length(unique(t))
+    if (is.factor(t)){
+      catln(levels(t))
+    }else if (is.numeric(t)){
+      catln('min', min(t), 'max', max(t), 'nuniq', nuniq)
+    }else{
+      catln('nuniq', nuniq)
+    }
+    if (nna>0) {catln('*** n na ',nna, '***')}
+  }
+}
+```
+## >> checkAllAreFactors
+```{r}
+checkAllAreFactors=function(facNames,dtb){
+  checkit=TRUE
+    for (f in facNames){
+    if (!is.factor(dtb[[f]])){
+      catln('Not factor: ', f)
+      checkit=FALSE
+    }
+    }
+  if (!checkit) stop('Must all be factors')
+  return(checkit)
+}
+
+```
+
+
+## >> make_respFacDtb() 
+
+```{r}
+#' make_respFacDtb Make a response factor data tabble
+#'
+#' @param srDtb  -- a stimulus-response data.table (one trial per row)
+#' @param masterCatColName -- column name for master category
+#' @param desiredFactorColNames -- column names to be used in formula
+#' @param includeMasterCatInDesired -- boolean (default TRUE) whether to include masterCatColName among desiredFactorColNames
+
+#' @details  Collect response factors from an srDtb and collect into a compact respFacDtb 
+#' Note if you want to exclude  masterCatColName from output of columns,
+#' you must set includeMasterCatInDesired=FALSE
+# .
+#' @return - returns a respFacDtb 
+#' @export
+#'
+
+make_respFacDtb=function(srDtb,masterCatColName,desiredFactorColNames, includeMasterCatInDesired=TRUE){
+  
+  facnames=unique(c(masterCatColName,desiredFactorColNames))
+if (!checkAllAreFactors(facnames,srDtb)) stop(' Programming error')
+  
+  inxFirstAppearanceMasterCat=c()
+  if (includeMasterCatInDesired && !(masterCatColName %in% desiredFactorColNames )){
+    desiredFactorColNames=c(masterCatColName,desiredFactorColNames)
+  }
+  masterCatLevs=levels(srDtb[[masterCatColName]])
+  for (i in seq_along(masterCatLevs)){
+    s=masterCatLevs[i];
+    # Get first occurrence of each syl, cn and vow corresponding to each level of syl
+    inxFirstAppearanceMasterCat[i]=which(srDtb[[masterCatColName]]==s)[1]
+  }
+  respFacDtb=srDtb[inxFirstAppearanceMasterCat, .SD,.SDcols=desiredFactorColNames]
+  
+  return(respFacDtb)
+}
+```
+
+
+
+This is to trick model.matrix into specifying a full matrix
+# >>> padLevels() - required by padLevels_facRespDtb, expand_facStimDtbLevels
+pad levels of single factor
+```{r}
+padLevels=function(x){ 
+  y=factor(x,levels=c('_',levels(x)))
+}
+```
+## >> padLevels_facRespDtb().  Expand the levels of a factor with a blank one at the front
+
+```{r}
+padLevels_facRespDtb= function(respFacDtb){
+  # Note may does NOT work "in place" as indexing via []
+  # Expand the levels with a dummy blank one at the front
+  # This is to trick model.matrix into specifying a full matrix
+  # This appears to work:
+  # Get a simple name for car::contr.Treatment and set the decorator
+  # This could all be done inside data.table by referene world, 
+  # using .SD, .SDcols and .L apply,
+  # I think we are triggering a copy and maybe a conversion to data.frame
+  for (fac in names(respFacDtb)){
+    respFacDtb[[fac]]=padLevels(respFacDtb[[fac]])
+    # catln(fac, 'still data .table', data.table::is.data.table(respFacDtb))
+  }
+  # catln(' before return padLevels_facRespDtb')
+  # showRespFacDtbLevs(respFacDtb)
+  return(data.table::as.data.table(respFacDtb))
+}
+```
+#
+## >> padLevels_facStim_srDtb(srDtb,stimVarColNames)
+```{r}
+padLevels_facStim_srDtb= function(srDtb,stimVarColNames){
+  # Expand any factorial stimulus factors
+  for (fac in stimVarColNames){
+    if (is.factor (srDtb[[fac]])){
+      srDtb[[fac]]=padLevels(srDtb[[fac]])
+      # catln(fac, 'still data .table', data.table::is.data.table(srDtb))
+      # catln('levs stimfac', fac)
+      # print(levels(srDtb[[fac]]))
+    }
+  }
+  # catln(' before return padLevels_facRespDtb')
+  
+  return(as.data.table(srDtb))
+}
+```
+
+## >> make_stimRespFacDtb(respFacDtb,srDtb)
+THis constructs  a respFactDtb row expanded [responesFactors, stimFactors] NROWS (== (  nrow(srDtb) x nMasterRespCat )  ) rows
+ with stimulus factors varying fastest down rows, then response categories
+
+```{r}
+make_stimRespFacDtb= function(respFacDtb,srDtb,stimVarColNames){
+  # This is slowish but it's pretty small . Could be done with .SD .SDcols and lapply, but this is clearer.
+  
+  ### Set up the car:Treatment contrasts for clearer labeling. Then build the srDmx design matrix
+  #  CBIND the columns of expanded  srDtb and respFacDtb factors, and make it a model.matrix
+  # Then extract just the design part
+  # paste the columns of row expanded respCat factors and row expanded stimulus properties
+  # Data table is useful because we can copy its rows efficiently.
+  
+  nObs=nrow(srDtb)
+  # Get this before expansion of factors
+  nrespCat=nrow(respFacDtb)
+  ## Need to keep track of stimulus properties extracted from srDtb
+  inxSrDtbCopy=rep(1:nObs,times=nrespCat)
+  inxRespFacCopy=rep(1:nrespCat,each=nObs)
+  stimRespFacStimDtb = cbind(respFacDtb[inxRespFacCopy, ],srDtb[inxSrDtbCopy, .SD,.SDcols=stimVarColNames])
+}
+
+```
+## >> make_respFacStimDtb(respFacDtb,srDtb)
+THis constructs  a respFactDtb row expanded [responesFactors, stimFactors]nObs (== ( nMasterRespCat x nrow(srDtb))  ) rows
+ with response factors varying fastest down rows
+
+```{r}
+make_respFacStimDtb= function(respFacDtb,srDtb,stimVarColNames){
+  # This is slowish but it's pretty small . Could be done with .SD .SDcols and lapply, but this is clearer.
+  
+  ### Set up the car:Treatment contrasts for clearer labeling. Then build the srDmx design matrix
+  #  CBIND the columns of expanded  srDtb and respFacDtb factors, and make it a model.matrix
+  # Then extract just the design part
+  # paste the columns of row expanded respCat factors and row expanded stimulus properties
+  # Data table is useful because we can copy its rows efficiently.
+  
+  nObs=nrow(srDtb)
+  # Get this before expansion of factors
+  nrespCat=nrow(respFacDtb)
+  ## Need to keep track of stimulus properties extracted from srDtb
+  inxSrDtbCopy=rep(1:nObs,each=nrespCat)
+  inxRespFacCopy=rep(1:nrespCat,times=nObs)
+  
+  
+  respFacStimDtb = cbind(respFacDtb[inxRespFacCopy, ],srDtb[inxSrDtbCopy, 
+                                                              .SD,.SDcols=stimVarColNames])
+}
+```
+## >> make_Dmx(form, respFacStimDtb,respVarColNames,stimVarColNames)
+```{r}
+make_Dmx=function(form, respFacStimDtbPadded,respVarColNames,stimVarColNames){
+  # Define contr.treat and decorator here.
+  # Make the model matrix don't forget the 1.
+  # Add also bare stimulus variables involved in formula
+  # The intercept and stimvars will get stripped at end.
+  # Note if respFacStimDtbPadded then you get an rsDnx with response cat
+  # varying fastest down rows, if stimRespFacDtbPadded, then you get 
+  # an srDmx with stinulus varying fastest and response cats stacked.
+  if (class(form)=='formula'){
+    # https://stackoverflow.com/a/14671346/1795127
+    # Eliminate extra spaces too
+    formStr= gsub('  +',' ',Reduce(paste, deparse(form)))
+  }else if (is.character(form)){
+    formStr=form
+  }else{
+    stop(' Input `form` should be  of class character string or formula')
+  }
+  # Get rid of anything up to ~ in formStr
+  formStr=sub('~','',formStr)
+  varsInForm=all.vars(as.formula(paste0('~',formStr)))
+  # Find the stim varsvariables that are included in the formula
+  stimVarsInForm = intersect(stimVarColNames, varsInForm)
+  respVarsInForm = intersect(respVarColNames,varsInForm)
+  # catln('stimVarsInForm',stimVarsInForm)
+  # catln('respVarsInForm',respVarsInForm)
+  # Also get factored stimuli
+  # factoredStimInForm=stimvarsInForm(sapply(is.factor,)
+  # sapply(is.factor )
+  # 
+# Get names of stim factors in form to add then in to mmCotrastList
+binxStimFactors=sapply(stimVarsInForm, function(x) is.factor(respFacStimDtbPadded[[x]]))
+stimFactorsInForm=stimVarsInForm[binxStimFactors]
+
+mmContrastList=list()
+  for (sv in c(respVarsInForm,stimFactorsInForm)){
+    # Compile the contrast matrix
+    mmContrastList[[sv]]="myIndicatorContrFun"
+  }
+  catln('mmContrastList')
+  print(mmContrastList)
+
+  # ???We have to add any stim vars to near the begining of the formula to keep from triggering "dummy" coding 
+  # in model.matrix. This includes factored stimulus variables (I think) 
+
+  nstimVarsAug= length(stimVarsInForm)
+  # paste0( "1+ ", paste0(f,collapse=' + '), ' + ', 'a + b + c')
+  # Paste the stimulus variables at the END?
+  augFormStr=paste0(" ~ 1 + ",formStr  , 
+                    " + " ,paste0(stimVarsInForm, collapse = " + ") )
+  # catln('formStr' ,formStr)
+  # catln('augFormStr',augFormStr )
+  mmx=model.matrix(as.formula(augFormStr) ,respFacStimDtbPadded, contrasts.arg = mmContrastList)
+  
+  # catln('mmx')
+  # summary(mmx)
+  # catln(' COlnames mmxRef')
+  # 
+  mmxNames=colnames(mmx)
+  # Remove the columns  exra columns 1 + number of stimvars in formula
+  # Good terms hould have contrast "|l<level> in in them either at begining or after :
+  # binxKeep=grepl('(^|:).*?\\|',mmxNames)
+  # Above doesn't work.
+  #  We need to delete any column that doesn't have a stimulus variable
+  #  This will do it.
+  effectsList= lapply(strsplit(mmxNames,':'), function(x) gsub('\\|.*$','',x))
+  binxKeep=sapply(effectsList, function(x) any(x %in% respVarsInForm))
+  # catln('broswer')
+  # browser()
+  # catln('passing mmx names', mmxNames[binxKeep])
+  srDmx=as.matrix(mmx)[,binxKeep]
+  return(srDmx)
+}
+
+```
+##  >> myIndicatorContrFun()
+```{r}
+#' myIndicatorContrFun   a decorated contrast function always forcing INDICATOR levels
+#'
+#' @param levLabs  charvec of level labels
+#' @param base base category
+#' @param contrasts  contrast=TRUE (ignored)
+#'
+#' @return
+#' @export
+#'
+#' @examples
+# cat('no examples\n')
+myIndicatorContrFun = function (levLabs, base = 1, contrasts = TRUE)
+{
+  # Specialized function for labeling contrsts witn <facname>|<levelLab>
+  # I.e. pipe symbol as prefix for level,
+  # inspired by car:contr.Treatment
+  catln('class (levLabs) in myIndicatorContrFun', class(levLabs))
+  catln('base', 'contrasts', base, contrasts)
+  # readline('myIndicatorContrFun :')
+  if (!is.character(levLabs)) {
+    stop('levLabs (first arg) needs to be a character vector.')
+  }
+  n <- length(levLabs)
+
+  if (!(base==1 && contrasts)){
+    stop( 'myIndicatorContrFun must have base=1 and contrasts=TRUE')
+  }
+  contrastNames <- paste0('|', levLabs)
+  contr <- array(0, c(n, n), list(levLabs, contrastNames))
+  diag(contr) <- 1
+  if (contrasts) {
+    if (n < 2) 
+      stop("Contrast requires at least 2 d.f.")
+    if (base < 1 | base > n) 
+      stop("Base level must be >= 1 and <= n")
+    contr <- contr[, -base, drop = FALSE]
+  }
+  contr
+}
+```
+## TestMake_respFacStimDtb
+```{r}
+## 
+## 
+# 
+# ---------TestMake_respFacStimDtb= function(){ ----------
+# Future expansion ??
+
+tst=readline( "do test y/n? ")
+srDtb=data.table(myFactorialHMNL_CreateData())
+# str(srDtb)
+# Classes ‘data.table’ and 'data.frame':	100 obs. of  6 variables:
+#     $ syl   : Factor w/ 6 levels "ba","bi","bu",..: 4 3 2 6 6 1 5 6 5 2 ...
+# $ x     : num  0.253 -2.029 -2.043 1.369 -0.226 ...
+# $ y     : num  0.788 0.769 2.332 -1.008 -0.119 ...
+# $ chosen: Factor w/ 6 levels "ba","bi","bu",..: 4 3 2 6 6 1 5 6 5 2 ...
+# $ cn   : Factor w/ 2 levels "b","d": 2 1 1 2 2 1 2 2 2 1 ...
+# $ vow   : Factor w/ 3 levels "a","i","u": 1 3 2 3 3 1 2 3 2 2 ...
+# - attr(*, ".internal.selfref")=<externalptr
+#
+#
+
+
+respFacDtb=make_respFacDtb(srDtb,'syl',c('syl','cn','vow'))
+respVarColNames = names(respFacDtb)
+catln('before respFacDtb expansion')
+showRespFacDtbLevs(respFacDtb)
+# readline('Here')
+# 
+ # ====== experimental ==============
+ # no padding using myIndicatorFun for 'contrasts.arg' list
+ respFacStimDtb= make_respFacStimDtb(respFacDtb,srDtb)
+# Padding requried for standard contrst (eg myIndicatorContrFun, contr.Treatment...)
+respFacDtbPadded=padLevels_facRespDtb(respFacDtb)
+
+catln('after respFacDtb padding')
+showRespFacDtbLevs(respFacDtbPadded)
+stimVarColNames=c('x','y','m')
+# Pad any factorial stimulus levels
+srDtbPadded= padLevels_facStim_srDtb(srDtb, stimVarColNames)
+respFacStimDtbPadded= make_respFacStimDtb(respFacDtbPadded,srDtbPadded)
+stimRespFacDtbPadded= make_stimRespFacDtb(respFacDtbPadded,srDtbPadded)
+showColInfo(respFacStimDtbPadded)
+showColInfo(stimRespFacDtbPadded)
+# Costruct a stimulus-response design matrix
+```
+
+# Execute make dmx from padded dtbs
+```{r}
+
+if (tst!='y') stop('Stopped by user')
+# Maybe if this is defined before the call to make_rsDmx?
+# contrTreat=function(...) car::contr.Treatment(...)
+# This has responsecategory varying fastest in rows then stimuli
+rsDmx= make_Dmx(~cn+vow+cn:vow+cn:x+vow:y+cn:m, respFacStimDtbPadded,respVarColNames,stimVarColNames)
+srDmx=make_Dmx(~cn+vow+cn:vow+cn:x+vow:y+cn:m, stimRespFacDtbPadded,respVarColNames,stimVarColNames)
+catln('rsDmx')
+print(head(rsDmx,n=20))
+catln('srDmx')
+print(head(srDmx,n=20))
+```
+
+## Feed to RSTAN
+// Feeding data. Should work if we provide data as per // https://mc-stan.org/rstan/reference/stan.html
+ˆ
+"matrix[J,K] y2[I]... we can use a list for y2 if the list has "I" elements,
+//    each of which is an array (matrix) of dimension "J*K"
+ # W need  matrix [ C, K]  X [N]
+```{r}
+
+X=list()
+rowOffset=0
+# We also have to pull off the subject (Respondant) variable
+for (n in 1:nObs){
+X[[n]]=rsDmx[rowOffset+1:C, ]
+rowOffset=rowOffset+C
+}
+
+# data {
+#   int<lower=2> C; // Number of alternatives (choices) in each scenario
+#   int<lower=1> K; // Number of alternatives
+#   int<lower=1> R; // Number of respondents
+#   int <lower=1> N; // total number of observations (grand trials) //// int<lower=1> S; // Number of scenarios per respondent
+#   int<lower=1,upper=C> Y[N]; // YB[R, S]; // best choices
+#   // int<lower=1,upper=C> YW[R, S]; // worst choices
+#   matrix[C, K] X[N]; // was   matrix[C, K] X[R, S]; // matrix of attributes for each obs
+#   int<lower=1, upper=R> RID[N]; // Added tmn. Serial identifier for respondant r on grandtrial N.
+}
+stanData=list( N=as.integer(nObs), C= as.integer(nrespCat), K = as.integer(ncol(rsDmx)),
+               R=
+
+
+)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+srDmxRef
+
+

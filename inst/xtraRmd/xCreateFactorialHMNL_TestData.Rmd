@@ -1,0 +1,145 @@
+---
+title: "CreateFactorialHMNL_TestData.Rmd"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+### >>>  FactorialHMNL_CreateData
+#' Title
+#'
+#'
+
+# CreateFactorialHMNL_TestData=function(R,ntot=100,seed=123){
+# Setup nu ----
+R=5
+seed=123
+
+
+if (!exists(".Random.seed")) runif(30)
+savedSeed <- .Random.seed
+on.exit({.Random.seed <- savedSeed; cat('Random seed restored.\n')})
+
+
+
+
+set.seed(seed)
+
+# C= 6
+#
+sylLabs=c('ba','da','bi','di','bu','du')
+catRespDtb= data.table( syl= factor(sylLabs, levels = sylLabs))
+catRespDtb$C= factor(substr(catRespDtb$syl,1,1),
+                      levels=c('b','d'))
+catRespDtb$V=factor(substr(catRespDtb$syl,2,2),
+                      levels= c('a','i','u'))
+
+C=length(levels(sylLabs))
+print(catRespDtb)
+```
+
+
+```{r}
+# Create a full stimulus table
+nS=100
+fullStimDtb=data.table( F1=rnorm(nS), 
+                        F2=rnorm(nS),
+                        cond=factor(sample(1:3,nS,replace=TRUE))
+)
+print(fullStimDtb)
+```
+## Create a design matrix (and get its column names during development)
+```{r}
+# Create an srDmx for one full experimennt
+form= ~C*V+C*F1+V*F2+C:cond
+
+rsDmx= make_rsIndicatorDmxFrom_srDtb(form = form, srDtb = fullStimDtb,
+                            stimVarColNames = names(fullStimDtb),
+                            respFacDescr = catRespDtb,
+                            includeMasterCatInDesired = TRUE)
+
+
+```
+```{r}
+coefNames=colnames(rsDmx)
+ncoef=length(coefNames)
+coefFamNames=getFamNamesFromCoefNames(coefNames)
+uFamNames=unique(coefFamNames)
+print(uFamNames)
+# "C"      "V"      "C:V"    "C:F1"   "V:F2"   "C:cond"
+# Prepare the population vector
+sigPopList=list()
+sigPopList$C=.2
+sigPopList$V=.3
+sigPopList[["C:V"]]=.1
+sigPopList[["C:F1"]] = 1.5
+sigPopList[["V:F2"]]= 1.5
+sigPopList[[ "C:cond"]]= .5
+print(sigPopList)
+bPopRaw=rep(NaN,ncoef)
+bPopCentered=bPopRaw
+bPopResid=bPopRaw
+names(bPop)=coefNames
+
+for (f in uFamNames){
+    inxB=which(f==coefFamNames)
+    nc=length(inxB)
+    #  Some of these need only simple centering
+    #  But 2 factor (+) interactions require more
+    print(sigPopList[[f]])
+    bPopRaw[inxB]=sigPopList[[f]]*rnorm(nc)
+    bPopCentered[inxB]=scale(bPopRaw[inxB],center=TRUE,scale=FALSE
+                             
+                             )
+    
+}
+```
+
+
+
+
+
+```{r}
+print(bPopRaw)
+print(bPopCentered)
+residMakerList=createResidualMaker(coefNames)
+# str(residMakerList)
+# # Residual maker list should also work for more complex factorial interactions
+for (f in uFamNames){
+    inxB=which(f==coefFamNames)
+    bPopResid[inxB]=residMakerList$RM_list[[f]]  %*% bPopRaw[inxB]
+}
+print(bPopResid)
+print(bPopResid-bPopCentered)
+```
+
+# Prepare the individual subjects deviations from population vector
+# make them all 10% of the populaiton sigma
+# number of participants = NP
+```{r}
+nP= 10
+sigmaSjList=lapply(sigPopList, function(x) 0.1*x)
+print(sigmaSjList)
+bSjList=list()
+for (iP in 1:nP){
+     bSjList[[iP]]=0*bPopRaw
+for (f in uFamNames){
+    inxB=which(f==coefFamNames)
+    nc=length(inxB)
+     bSjList[[iP]][inxB]=bPop[inxB]+rnorm(nc)*sigmaSjList[[f]]
+}
+}
+str(bSjList)
+
+```
+```{r}
+ntrialMax=5
+bThis=bSjList[[3]]
+etaThis= matrix(rsDmx%*%bThis,
+
+
+```
+

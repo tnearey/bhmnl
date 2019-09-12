@@ -1,0 +1,69 @@
+---
+title: "Test bhmnl"
+output: html_notebook
+---
+```{r}
+# ---------TestMake_respFacStimDtb= function(){ ----------
+# Future expansion ??
+
+tst=readline( "do test y/n? ")
+srDtb=data.table(myFactorialHMNL_CreateData())
+# str(srDtb)
+# Classes ‘data.table’ and 'data.frame':	100 obs. of  6 variables:
+#     $ syl   : Factor w/ 6 levels "ba","bi","bu",..: 4 3 2 6 6 1 5 6 5 2 ...
+# $ x     : num  0.253 -2.029 -2.043 1.369 -0.226 ...
+# $ y     : num  0.788 0.769 2.332 -1.008 -0.119 ...
+# $ chosen: Factor w/ 6 levels "ba","bi","bu",..: 4 3 2 6 6 1 5 6 5 2 ...
+# $ cn   : Factor w/ 2 levels "b","d": 2 1 1 2 2 1 2 2 2 1 ...
+# $ vow   : Factor w/ 3 levels "a","i","u": 1 3 2 3 3 1 2 3 2 2 ...
+# - attr(*, ".internal.selfref")=<externalptr
+#
+#
+
+
+respFacDtb=make_respFacDtb(srDtb,'syl',c('syl','cn','vow'))
+respVarColNames = names(respFacDtb)
+catln('before respFacDtb expansion')
+showRespFacDtbLevs(respFacDtb)
+# readline('Here')
+# 
+
+if (tst!='y') stop('Stopped by user')
+# Maybe if this is defined before the call to make_rsDmx?
+# contrTreat=function(...) car::contr.Treatment(...)
+# This has responsecategory varying fastest in rows then stimuli
+rsDmx= make_Dmx(~cn+vow+cn:vow+cn:x+vow:y+cn:m, respFacStimDtbPadded,respVarColNames,stimVarColNames)
+srDmx=make_Dmx(~cn+vow+cn:vow+cn:x+vow:y+cn:m, stimRespFacDtbPadded,respVarColNames,stimVarColNames)
+catln('rsDmx')
+print(head(rsDmx,n=20))
+catln('srDmx')
+print(head(srDmx,n=20))
+
+
+## ------------------------------------------------------------------------
+
+X=list()
+rowOffset=0
+# We also have to pull off the subject (Respondant) variable
+for (n in 1:nObs){
+    X[[n]]=rsDmx[rowOffset+1:C, ]
+    rowOffset=rowOffset+C
+}
+
+# data {
+#   int<lower=2> C; // Number of alternatives (choices) in each scenario
+#   int<lower=1> K; // Number of alternatives
+#   int<lower=1> R; // Number of respondents
+#   int <lower=1> N; // total number of observations (grand trials) //// int<lower=1> S; // Number of scenarios per respondent
+#   int<lower=1,upper=C> Y[N]; // YB[R, S]; // best choices
+#   // int<lower=1,upper=C> YW[R, S]; // worst choices
+#   matrix[C, K] X[N]; // was   matrix[C, K] X[R, S]; // matrix of attributes for each obs
+#   int<lower=1, upper=R> RID[N]; // Added tmn. Serial identifier for respondant r on grandtrial N.
+# }
+stanData=list( N=as.integer(nObs), C= as.integer(nrespCat), K = as.integer(ncol(rsDmx)),
+               R=
+                   
+                   
+)
+
+```

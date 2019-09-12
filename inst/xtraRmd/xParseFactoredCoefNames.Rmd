@@ -1,0 +1,352 @@
+---
+title: "ParseFactoredCoefNames"
+output: html_notebook
+---
+## Parse coef names to design matrices and calculate hat matrix.
+### The problem:
+See: ParseFactoredCoefNamesDocPrep.rmd
+ans also processFactoredCoefNames.R in R directory
+
+
+```{r}
+library(stringr)
+library(nutils)
+# Value
+# For str_match, a character matrix. First column is the complete match, followed by one column for each capture group. For str_match_all, a list of character matrices.
+
+
+catln <- function(...) {cat(...,'\n')}
+```
+
+#>> getTestCoefNames()
+```{r}
+#' getTestCoefNames
+#'
+#' @return list of test coefficient names
+#' @export
+#'
+#' @examples
+#' print(' no examples')
+getTestCoefNames=function(){
+  coefNames=c(
+    "C|b",
+    "C|d",
+    "V|a",
+    "V|i",
+    "V|u",
+    "C|b:V|a",
+    "C|d:V|a",
+    "C|b:V|i",
+    "C|d:V|i",
+    "C|b:V|u",
+    "C|d:V|u",
+    "C|b:F1",
+    "C|d:F1",
+    "V|a:F2",
+    "V|i:F2",
+    "V|u:F2",
+    "C|b:cond|1",
+    "C|d:cond|1",
+    "C|b:cond|2",
+    "C|d:cond|2",
+    "C|b:cond|3",
+    "C|d:cond|3"
+  )
+}
+```
+`
+
+
+
+
+# Go
+## >> getGFacAndLevNames Get general factor and level names
+```{r}
+#' getGFacAndLevNames
+#' Get general factor and factor level names
+#`  @details
+#`  gfactors are "general factors" that include categorical factors  (cfactors)  and  
+#`  continuous covariates. The former have levels, the latter don;t
+#`  
+#' @param theseCoefs  a character vector of coefficient names of form <gfacName>("|"<levelName>)
+#' separated by ":"
+#' @return
+#' @export
+#'
+#' @examples
+#' print('noexamples')
+getGFacAndLevNames=function(theseCoefs){
+  
+  # Extract factor nanes and levels from a coefficient names
+  #  But ignore factors without levels (covariates)
+  # Looking
+  # Regex 101 '([^|:]+)(?:[|])?([^:])*(?:[:])?
+  # match 1 whole
+  # match 2 ([^|:]+) factor,
+  # non matching group maybe "|"
+  # match 3 ([^:])* level  or NA covariate 
+  # non matching group maybe ":"
+  rexPat='([^|:]+)(?:[|])?([^:])*(?:[:])?'
+  theMatchList=str_match_all(theseCoefs,rexPat)
+  facLevList=list()
+  ii=0
+  for (i in 1:length(theMatchList)){
+    # if there is no level, it's a covariate so don't 
+    # accumulate it in factors
+    tlev=theMatchList[[i]][ ,3 ]
+    # First element of tlev will tell us if its a covariate
+    if (!is.na(tlev[1]))
+      ii=ii+1
+    facLevList[[ii]]=list()
+    facLevList[[ii]]$fac=theMatchList[[i]][,2 ]
+    facLevList[[ii]]$lev=theMatchList[[i]][,3 ]
+  }
+  #-dbg     catln('Returning from getGFacAndLevNames')
+  # showvars(facLevList)
+  return(facLevList)
+}
+# getGFacAndLevNames(coefNames)
+# unlist(getGFacAndLevNames(coefNames)) This will return a long character vector
+
+```
+## >> getOneFamilyDfrAndCFacStr(thisFam,gcoefFamCv){
+
+```{r}
+#' getOneFamilyDfrAndCFacStr Get a data frame and a categorical factor string of a coefficient family name
+#'
+#' @param thisFam -- a coefficient family name  (string) egs C:V:F1, C,V
+#' @param gcoefFamCv -- a character vector of coefFam names
+#'
+#' @return a list with components dfr - data frame reflecting true factor  and cFacStr a string with the "true" multi level factors involved (covariates  removed)
+#' @details
+#'  dataframe  and  cFacStr are useful useful for creating model matrix to
+#'  remove the marginal values of factors mm = model.matrix. 
+#' @export
+#'
+#' @examples
+#' print('noexamples')
+getOneFamilyDfrAndCFacStr=function(thisFam,gcoefFamCv){
+  # browser()
+  thiscoefFamCFacCv=c()
+  #-dbg     catln('thisFam', thisFam)
+  # browser()
+  inxTheseFamCoefs=which(gcoefFamCv==thisFam)
+  nTheseCoefs=length(inxTheseFamCoefs)
+  theseNames=coefNames [inxTheseFamCoefs]
+  # Calculate the number of factors 1 + number of colons
+  nTheseFacs=1+str_count(theseNames[1],':')
+  theseFacsAndLevsList=getGFacAndLevNames(theseNames)
+  # Example:
+  # "facLevList": list
+  # [[1]]
+  # [[1]]$fac
+  # [1] "C" "F1"
+  # 
+  # [[1]]$lev
+  # [1] "b" NA 
+  # 
+  # [[2]]
+  # [[2]]$fac
+  # [1] "C" "F1"
+  # 
+  # [[2]]$lev
+  # [1] "d" NA 
+  # 
+  # We can get the family factor names from first level
+  thisFamiyFacNames=theseFacsAndLevsList[[1]]$fac
+  #-dbg     catln('thisFamiyFacNames',thisFamiyFacNames)
+  # # Even ones are the levels for each factor
+  # Only need first coef levels to determine if it's a factor or covariate
+  firstCoefLevNames=theseFacsAndLevsList[[1]]$lev
+  # browser()
+  # dfList will later be converted to data.frame
+  dfList=list()
+  iTrueFac=0
+  for (ifac in 1:nTheseFacs){
+    # If  level of firstCoefLevNames[ifac]  is NA then we have a
+    # covariate so we don't need it in the design: this skips it.
+    # it also doesn't accumulate cocariate names in    thiscoefFamCFacCv  
+    if (!is.na(firstCoefLevNames[ifac])){
+      iTrueFac=iTrueFac+1
+      thiscoefFamCFacCv[iTrueFac]=thisFamiyFacNames[ifac]
+      tfacLevs=rep('',nTheseCoefs)
+      for (jcoef in 1:nTheseCoefs ){
+        tfacLevs[jcoef]=theseFacsAndLevsList[[jcoef]]$lev[ifac]
+      }
+      dfList[[ thisFamiyFacNames[ifac] ]]=factor(tfacLevs)
+      #   catln('dfList in factor loop')
+      # print(dfList)
+      # browser()
+    }
+    # 
+  } # end for ifac
+  
+  thisFamCatFacStr=paste0(unlist(   thiscoefFamCFacCv),collapse=':')
+  
+  # make the 
+  # We have enough info to construct the empty data frame    as.ch
+  #-dbg     catln('thisFam', thisFam)
+  #-dbg     catln('dfList for family')
+  #-dbg         print(str(dfList))
+  # need as.data.frame not data.frame
+  dfr=as.data.frame(dfList)
+  #-dbg     catln('dfr for this family') 
+  #-dbg     print(dfr)
+  # browser()
+  return(list(dfr=dfr, cFacStr=thisFamCatFacStr))
+}
+```
+## >>makeFormStrFromCFacStr
+```{r}
+makeFormStrFromCFacStr=function(cFacStr, yVarName=''){
+  formStr=paste0(yVarName,'~',str_replace(cFacStr,':','*'),
+                 '-',cFacStr)
+}
+```
+
+## >> makeModelMatFromFamilyDfrAndCFacStr(dfr,cFacStr)
+```{r}
+#' makeModelMatFromFamilyDfrAndCFacStr
+#'
+#' @param dfr  data frame as created in getOneFamilyDfrAndCFacStr
+#' @param cFacStr string with true facrors (getOneFamilyDfrAndCFacStr)
+#'
+#' @return  model matrix appropriate for marginal-centering of the factorial coeefficient family
+#' @export
+#'
+#' @examples
+#' print('no example makeModelMatFromFamilyDfrAndCFacStr')
+makeModelMatFromFamilyDfrAndCFacStr=function(dfr,cFacStr){
+  formStr=makeFormStrFromCFacStr(cFacStr)
+  mm= model.matrix(as.formula(formStr),data=dfr)
+  return(mm)
+}
+```
+
+
+# Create residual maker matrices for each family
+```{r}
+#' createResidualMaker
+#'
+#' @param coefNames  coefficient names a e.g. c("C|d", "V|a",... "C_d:V_a: ...., C|b:V|a:y") 
+#' @param shouldReturnBigMatrix  default FALSE. If true, RM_bigMat component returned
+#' @param showLMTest  default FALSE. f True an example test is run for random coefficients.
+#'
+#' @return  result: a list with components familyNames, RM_list and optionally RM_bigMat
+#' @export
+#'
+#'  @details
+#'  Given an character vector of coefficient names for a HMNL, this function creates 
+#   a result consisting of 
+#     result$familyNames the family names of groups of coefficients. EG
+#    if coefNames == c("C|d", "V|a",... "C_d:V_a: ...., C|b:V|a:y"), the returned
+#'    familyNames would include "C", "V", C:V", "C:V:y"
+#'    result$RM_list a list of residual maker matrices for anihilating all marginal sums of 
+#'   factorial coefficients.
+#' and result$RM_bigMat  a large (ncoef x ncoef) matrix with non-zero blocks constisting of
+#  result$RM_list[[ifam]] ifam=1:nfam.
+
+#'
+#'
+#'
+#'
+#'
+#'
+#' @examples
+#' print('no examples')
+createResidualMaker=function (coefNames, shouldReturnBigMatrix=FALSE, showLMTest=FALSE){
+  
+  fHatMat=function(X){
+    hat= X %*% solve(t(X) %*% X) %*% t(X)
+  }
+  ## Check via lm that the sum to zero constraints actually work
+  
+checkVia_lm= function(thisFamName,thisFamCFacName,tmpDfr,btmpRes){
+  lmForm= makeFormStrFromCFacStr(coefFamCFacCv[thisFam],"btmpRes")
+  tmpdfr$btmpRes=btmpRes
+  catln('grand mean resids', mean(btmpRes))
+  catln(lmForm)
+  print(summary(lm(as.formula(lmForm),data=thisFamDfrAndTrueFacList$dfr)))
+  }
+# ----------
+ncoefAll=length(coefNames)
+#-dbg catln('gcoefFamCv')
+# Strip levels to get gust General Factor families
+# So  C|b:V|i:x  --> C:V:x
+gcoefFamCv=str_replace_all( coefNames,"\\|.*?(:|$)","\\1")
+#-dbg print(gcoefFamCv)
+uFamStr=unique(gcoefFamCv)
+coefFamCFacCv=c()
+RM_list=list()
+for (thisFam in uFamStr){
+  thisFamDfrAndTrueFacList= getOneFamilyDfrAndCFacStr(thisFam,gcoefFamCv)
+  # browser(),
+  thisModelMat= makeModelMatFromFamilyDfrAndCFacStr(thisFamDfrAndTrueFacList$dfr,thisFamDfrAndTrueFacList$cFacStr)
+  coefFamCFacCv[thisFam] = thisFamDfrAndTrueFacList$cFacStr 
+  # coefFamTrueFacList[[thisFam]]=paste0(unlist(   thiscoefFamCFacCv),collapse=':')
+  # showvars(thisModelMat)
+  # https://en.wikipedia.org/wiki/Projection_matrix
+  # Projection operator P (hat matrix by another name)
+  Hat = fHatMat(thisModelMat)
+  # Residual maker  operator (I-P)
+  RM_list[[thisFam]]= diag(nrow(Hat))-Hat
+  #
+  if (showLMTest){
+    ncoef=nrow(Hat)
+    btmp=as.matrix(20*rnorm(ncoef))
+    btmpRes= RM_list[[thisFam]] %*% btmp
+    tmpdfr=thisFamDfrAndTrueFacList$dfr
+    checkVia_lm(thisFamName,thisFamCFacName=coefFamCFacCv[thisFam],tmpDfr,btmpRes)
+    # options(contrast=saveContrOpt)                           
+    # browser()
+  }
+  #  Now pack this into the grand 
+} #end for thisFam
+
+#  Create 0 matrix to hold the RM_bigMat -- the residual operator for
+#  ALL the family wise residual operator submatries (block diagonal)
+if (shouldReturnBigMatrix){
+  RM_bigMat = matrix(0,ncoefAll,ncoefAll, dimnames=list(coefNames,coefNames))
+  for (thisFam in uFamStr){
+    inxTheseFamCoefs=which(gcoefFamCv==thisFam)  
+    RM_bigMat[inxTheseFamCoefs,inxTheseFamCoefs]=RM_list[[thisFam]]
+  }
+}else{
+  RM_bigMat=NULL
+}
+
+return( list(famNames=uFamStr,RM_list=RM_list,RM_bigMat=RM_bigMat))
+# showvars(coefFamCFacCv)
+
+} 
+```
+# Testing code
+```{r}
+coefNames=getTestCoefNames()
+result=createResidualMaker(coefNames, shouldReturnBigMatrix=TRUE, showLMTest=TRUE)
+showvars(result)
+
+# So we need to try to run ../inst/BayesHMNL.stan on some test data using
+# bigmatrix... Then we can work on separate covariances per family of bcoefficients and stacking 
+# 
+# # data {
+#   int<lower=2> nRespCat; // Number of response category alternatives (choices) in each scenario
+#   int<lower=1> K; // Number of columns in each design matrix list X[t]
+#   int<lower=1> nP; // Number of participants (respondants/ agents/ persons/perceivers)
+#   int <lower=1> T; // total number of observation trials  (grand trials) //// int<lower=1> S; // Number of scenarios per respondent
+#   int<lower=1,upper=nRespCat> Y[T]; // YB[nP, S]; // best choices
+#   // int<lower=1,upper=nRespCat> YW[nP, S]; // worst choices
+#   matrix[nRespCat, K] X[T]; // was   matrix[nRespCat, K] X[nP, S]; // matrix of attributes for each obs
+#   int<lower=1, upper=nP> PID[T]; // Added tmn. Serial identifier for participant on each observation trial
+# }
+```
+
+
+
+
+
+
+
+
+`
+
