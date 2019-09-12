@@ -1,0 +1,307 @@
+---
+title: "test 1D 3Cat HMNL sum to zero"
+output: html_notebook
+---
+
+# Sum to zero coefficient HMNL 1 dimensional with lapses optional
+
+This is a demonstration of Bayesian hierarichical multinomial regression with lapses in responses run on some test data.
+
+```{r}
+library(bhmnl)
+
+system(paste0("open ",  "'"  ,  tempdir() ,  "'" )) 
+
+# Data generated thru "CreateTest2D3Cat_HMNL_data.Rmd"  in this dir
+useLapse=TRUE
+if(useLapse){
+  browser()
+  load("../data/test1D3CatLapseDatList.rda")
+srDtbAll= test1D3CatLapseDatList$srDtbAll
+thetaMatTrue=test1D3CatLapseDatList$thetaMatTrue
+bMatSjList= test1D3CatLapseDatList$bMatSjList
+lambda_sList=test1D3CatLapseDatList$lambda_sList
+
+rm(test1D3CatLapseDatList)
+}else{
+data("test1D3CatDatList.rda")
+# Peel out the list elements
+srDtbAll= test1D3CatDatList$srDtbAll
+thetaMatTrue=test1D3CatDatList$thetaMatTrue
+bMatSjList= test1D3CatDatList$ bMatSjList
+rm(test1D3CatDatList)
+}
+# Response factor:
+
+srDtbAll[,resp:=factor(catSym,levels=c("A","B","C"))]
+# 
+formAna= ~resp*x
+
+rsSumDmx=make_rsSumDmxFrom_srDtb(form = formAna, srDtb = srDtbAll,
+                                 stimVarColNames = c("x"), respFacDescr = c("resp"),
+                                 includeMasterCatInDesired = TRUE)
+
+
+```
+```{r}
+str(rsSumDmx)
+masterCatLevels=attr(rsSumDmx,'masterCatLevels')
+nCat=length(masterCatLevels)
+
+```
+##  Now lets try BayesHMNL with sum to zero coefficients
+When an element is of type list, it is supposed to make it easier to pass data
+for those declared in Stan code such as 
+"vector[J] y1[I]" and "matrix[J,K] y2[I]".
+Using the latter as an example, we can use a list for y2 if the list has "I" elements,
+each of which is an array (matrix) of dimension "J*K". However, it is not possible
+to pass a list for data declared such as "vector[K] y3[I,J]"; the only way for it is to
+use an array with dimension "I*J*K".
+variable changes nRespCat -> nRespCat ; nP -> P participant; T -> T total number of observation trials
+where each observation  trial is a single trial for a single participant.
+
+```
+data {
+int<lower=2> nRespCat; // Number of response category alternatives (choices) in each scenario
+int<lower=1> K; // Number of columns in each design matrix list X[t]
+int<lower=1> nSj; // Number of subjects (respondants/ agents/ persons/perceivers)
+int <lower=1> nT; // total number of observation trials  (grand trials) ////
+int<lower=1,upper=nRespCat> Y[nT]; // YB[nSj, S]; // best choices
+matrix[nRespCat, K] X[nT]; // was   matrix[nRespCat, K] X[nSj, S]; // matrix of attributes for each obs
+int<lower=1, upper=nSj> SjID[nT]; // Added tmn. Serial identifier for participant on each observation trial
+}
+
+```
+THis means we need to pack 
+rsSumDmx into a huge list
+with nrows(rsSumDmx)/nCat elements
+```{r}
+
+nT=nrow(rsSumDmx)/nCat
+# nRep=nT/nStim*nSj
+#  assertthat::assert_that(nT==nStim*nSj*nRep) 
+XList=list()
+irng=1:nCat
+# Repack the data
+for (t in 1:nT){
+  XList[[t]]=as.matrix(rsSumDmx[irng,])
+  irng=irng+nCat
+}
+```
+# Run the sucker
+parameters {
+// vector[K] Beta[nSj];
+vector[K]  Beta[nSj];
+// vector[K - 1] Theta_raw;
+vector[K] Theta;
+cholesky_factor_corr[K] L_Omega;
+vector<lower=0, upper=pi()/2>[K] L_sigma_unif;
+}
+#  Pick analysis
+
+```{r}
+# Fully non-centered version or not
+if (useLapse){
+  # stanFile=  "../inst/stanFiles/BayesHMNL_s2zLapseM1A.stan"
+     stanFile= system.file("stanFiles","BayesHMNL_s2zLapseM1A.stan", package="bhmnl")
+
+  saveParsCvec=c('theta','beta','L_sigma','L_Omega', 'u')
+}else{
+  catln('BayesHMNL_s2zM1A.stan' )
+  # stanFile=  "../inst/stanFiles/BayesHMNL_s2zM1A.stan"
+     stanFile= system.file("stanFiles","BayesHMNL_s2zM1A.stan", package="bhmnl")
+  saveParsCvec=c('theta','beta','L_sigma','L_Omega')
+}
+
+homogeneous=FALSE
+if (homogeneous){
+  ### THIS WORKS FINE BELOW
+  ## Simple homogeneous logit see if we've got it right
+  # stanFile=  "../inst/stanFiles/BayesMNL_s2z.stan"
+  stanFile= system.file("stanFiles","BayesMNL_s2z.stan", package="bhmnl")
+
+  saveParsCvec=c('theta')
+}
+### AV
+
+library(rstan)
+nChains=4
+nIter=2000
+nWarmup=floor(2*nIter/4)
+nRefresh= 100
+myVerbose= FALSE
+testData=list(X=XList,
+              Y=as.integer(srDtbAll$resp),
+              jj= as.integer(srDtbAll$Sj),
+              D=ncol(XList[[1]]),
+              C= nCat,
+              N=nT,
+              J=length(unique(srDtbAll$Sj)),
+              dbgLev=0
+)
+```
+
+## Remove unnecessary items from memory
+```{r}
+rm(list=c('srDtbAll','rsSumDmx'))
+
+```
+
+```{r}
+fit1NC <- stan(
+  file = stanFile,  # Stan program
+  data = testData,    # named list of data
+  pars = saveParsCvec,
+  chains = nChains,             # number of Markov chains
+  warmup = nWarmup,          # number of warmup iterations per chain
+  iter = nIter,            # total number of iterations per chain
+  cores = 2,              # number of cores (could use one per chain)
+  control=list(adapt_delta=.95),
+  refresh = nRefresh,             # progress every nRefresh
+  verbose = myVerbose,
+  init="0" # This was running off the rails with random initialization
+  
+)
+
+```
+
+
+```{r}
+show(fit1NC)
+# summary(fit1NC)
+# sampler_params <- get_sampler_params(fit1NC, inc_warmup = TRUE)
+# summary(do.call(rbind, sampler_params), digits = 2)
+# stop('Stop here')
+
+```
+
+# Compare to  theta generating data -- the non-lapse true theta values
+We see that estimated 'population' mean is very close to true bSj= betaSj+theta values in the generating sample. (The third column in the true means is redundant -- sum to zero across cols and is not estimated)
+
+```{r}
+# https://mc-stan.org/rstan/reference/stanfit-method-extract.html
+fit_ss <- extract(fit1NC, permuted = TRUE) # fit_ss is a list 
+thetaH=fit_ss$theta
+thetaHMeanVec=apply(thetaH,2,mean)
+
+# 
+# thetaMatTrue
+#            [,1]     [,2]       [,3]
+# [1,] -0.5270463 1.054093 -0.5270463
+# [2,] -4.0000000 0.000000  4.0000000
+# We only want to compare cols 1 and 2
+# 
+ # https://stackoverflow.com/a/16543224/1795127
+ 
+thetaTrueVec=as.vector(t(thetaMatTrue[,-3]))
+print(thetaTrueVec)
+bArraySj= simplify2array(bMatSjList)
+
+bArraySjMean=apply(bArraySj,c(1,2),mean)
+bSjMeanTrueVec=as.vector(t(bArraySjMean[,-3]))
+
+catln('thetaTrueVec')
+print(thetaTrueVec)
+catln('bSjMeanTrueVec')
+print(bSjMeanTrueVec)
+catln('thetaHatMeanVec')
+print(thetaHMeanVec)
+
+# 
+
+```
+# Compare to u -the key lapse parameters (u's) by subject
+```{r}
+uH=fit_ss$u
+# uH
+#  dim(uH) samples, subjects, parameters
+# [1] 4000   10    3
+# Get mean over iterations  (rows are subjects)
+uHMeanSjMat=apply(uH,c(2,3),mean )
+
+#  what you want is in 
+#  > lambda_sList[[iSj]]$sU
+# # # $lambda_s
+# # [1] 0.001357835 0.013273951 0.016028824
+# # $lambda
+# # [1] 0.03066061
+# # $s_u
+# # [1] 0.04428598 0.43293172 0.52278230
+
+xx=c()
+yy=c()
+for (iSj in 1:nrow(uHMeanSjMat)){
+  catln("Subject", iSj, "uHat then uTrue one line each")
+  # but our uH  need exponentiation
+  print(exp(uHMeanSjMat[iSj,]))
+  xx=c(xx,uHMeanSjMat[iSj,])
+  print(lambda_sList[[iSj]]$s_u)
+  yy=c(yy,lambda_sList[[iSj]]$s_u)
+}
+plot(xx,yy)
+```
+
+## Bayesplot
+```{r}
+library(bayesplot)
+color_scheme_set('gray')
+posterior_cp=as.array(fit1NC)
+nutsPars <- nuts_params(fit1NC)
+```
+# Rhats
+
+```{r}
+# seems to require bayesplot:: prefix
+myRexPars="^theta|^beta|^L_sigma|^u"
+rhats=bayesplot::rhat(fit1NC,regex_pars=myRexPars)
+print(rhats[rhats>1.1])
+
+```
+```{r}
+# seems to require bayesplot:: prefix
+rhats=bayesplot::rhat(fit1NC)
+print(rhats[rhats>1.1])
+mcmc_rhat(rhats,regex_pars=myRexPars)
+```
+
+
+## Neff
+```{r}
+# THis onw needs pruning
+neffRatios=neff_ratio(fit1NC)
+print(neffRatios)
+ mcmc_neff(pruneStanfitObj(fit1NC, c("theta", "beta", "L_sigma", "u")))
+```
+## Parcoord
+
+
+```{r}
+mcmc_parcoord(posterior_cp, np = nutsPars, regex_pars = '^theta')
+```
+```{r}
+mcmc_parcoord(posterior_cp, np = nutsPars, regex_pars = '^L_sigma')
+```
+
+```{r}
+mcmc_parcoord(posterior_cp, np = nutsPars, regex_pars = '^u')
+```
+
+
+```{r}
+mcmc_pairs(fit1NC,np = nutsPars,regex_pars="^beta\\[[1-9],2|^L_sigma\\[2]")
+```
+
+```{r}
+pairs(fit1NC, pars = c("theta[1]","theta[2]", "theta[3]", "L_sigma[1]",  "L_sigma[2]",  "L_sigma[3]"), log = TRUE, las = 1)
+```
+
+```{r}
+catln('About to launch shinystan')
+browser()
+library(shinystan)
+launch_shinystan(fit1NC)
+
+# 
+# 
+```
+
