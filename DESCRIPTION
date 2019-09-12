@@ -1,0 +1,30 @@
+Package: bhmnl
+Title: Bayesian hierarichical multinomil logistic with possible factorial responses
+Version: 0.0.0.9000
+Authors@R: 
+    person(given = "Terrance",
+           family = "Nearey",
+           role = c("aut", "cre"),
+           email = "noone@nowhere.net",
+           comment = c(ORCID = "YOUR-ORCID-ID"))
+Description: What the package does (one paragraph).
+License: GPL-3
+Encoding: UTF-8
+Language: es
+LazyData: true
+VignetteBuilder: knitr
+RoxygenNote: 6.1.1
+Depends: 
+    stringr,
+    data.table
+Imports:
+    assertthat
+Suggests:
+    knitr,
+    devtools,
+    roxygen2,
+    testthat,
+    rmarkdown,
+    nutils
+URL: https://github.com/tnearey/bhmnl
+BugReports: https://github.com/tnearey/bhmnl/issues
